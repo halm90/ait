@@ -97,6 +97,8 @@
 
 import  argparse
 import  json
+import  logging
+from    logging.handlers                 import  SysLogHandler
 import  os
 import  subprocess
 import  sys
@@ -108,6 +110,8 @@ import  yaml
 import  requests
 
 from    Components.power_supply_control import DCSupply, PS_Object
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SLACK_MESSAGE_PAUSE = 45
 DEFAULT_OVERLIMIT_RESET     = 30
@@ -188,7 +192,7 @@ def telem_val(names: list) -> Union[float, str, int, bool]:
     except subprocess.TimeoutExpired:
         return []
     except subprocess.CalledProcessError as exn:
-        print(f"{time.time()}: telem-csv exited with an error: {exn}")
+        logger.error("telem-csv exited with an error: %s", exn)
         return []
     # This was as follows to get values for those in the names list, but that didn't handle
     # list types.
@@ -497,9 +501,9 @@ class InfoDisplay:
                     # quick succession (e.g. health.service itself bouncing once during
                     # the target's own startup). Treat this as the SAME event -- update
                     # the cached value and move on quietly, no second popup.
-                    print(f"{now}: boot_id changed again ({self.last_boot_id} -> " +
-                          f"{current_boot_id}) within {REBOOT_DEBOUNCE_SEC}s of the last " +
-                          "reported reboot -- treating as the same event, not popping up again")
+                    logger.info(f"{now}: boot_id changed again ({self.last_boot_id} -> " +
+                                f"{current_boot_id}) within {REBOOT_DEBOUNCE_SEC}s of the last " +
+                                "reported reboot -- treating as the same event, not popping up again")
             if current_boot_id is not None:
                 self.last_boot_id = current_boot_id
 
@@ -546,9 +550,9 @@ class InfoDisplay:
                 now = time.time()
                 ok_ts = row_info['alert'].val_ok_ts
                 if ok_ts and now >= (ok_ts + self.args['reset_seconds']):
-                    print(f"{now}: {row_key} value {row_val} back within limits " + \
-                          f"(upper={upper_limit}, lower={lower_limit}) for " + \
-                          f"{self.args['reset_seconds']} seconds")
+                    logger.info(f"{now}: {row_key} value {row_val} back within limits " + \
+                                f"(upper={upper_limit}, lower={lower_limit}) for " + \
+                                f"{self.args['reset_seconds']} seconds")
                     del row_info['alert']
                     row_info['tag'] = 'yellow'
                 elif not ok_ts:
@@ -590,8 +594,8 @@ class InfoDisplay:
             general:
                 reboot_popup: false
         """
-        print(f"{time.time()}: target reboot detected (boot_id {old_id} -> {new_id}), " +
-              f"clearing pending warnings/alarms")
+        logger.warning(f"{time.time()}: target reboot detected (boot_id {old_id} -> {new_id}), " +
+                       "clearing pending warnings/alarms")
 
         for row_key, row_info in self.disp_info.items():
             if row_key == BOOT_ID_KEY:
@@ -631,15 +635,15 @@ class InfoDisplay:
         dismiss it manually before the script finishes.
         """
         if self.active_action == action:
-            print(f"action script {action} already in progress")
+            logger.info("action script %s already in progress", action)
             return
         self.active_action = action
 
         try:
-            print(f"starting action script {action}")
+            logger.info("starting action script %s", action)
             proc = subprocess.Popen([action, row_key, str(row_val), str(threshold)])
         except Exception as exc:                              #pylint: disable=broad-except
-            print(f"Failed to launch action '{action}' for {row_key}: {exc}")
+            logger.error("Failed to launch action '%s' for %s: %s", action, row_key, exc)
             return
 
         popup = tk.Toplevel(self.root)
@@ -707,6 +711,11 @@ if __name__ == "__main__":
     script_nm       = os.path.basename(sys.argv[0])     # invocation name of script
     script_base     = os.path.basename(script_nm)       # name of invoked script (ie: runopts.py)
     script_title    = script_base.rsplit('.')[0] if script_base.endswith(".py") else script_base
+    syslog_handler = SysLogHandler(address="/dev/log")
+    syslog_handler.setFormatter(logging.Formatter(f"{script_nm}[%(process)d]: %(message)s"))
+    logger.addHandler(syslog_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
     hpath           = os.path.expandvars("${HOME}/.ait/" + script_title)
     def_config      = hpath if os.path.isfile(hpath) else None
@@ -812,15 +821,16 @@ if __name__ == "__main__":
                 if yaml_conf.get("general"):
                     argdict = {**argdict, **yaml_conf['general']}
             except Exception as exn:
-                print(f"Config file '''{arguments.config}''' is malformed or missing: {exn}")
+                logger.error("Config file '''%s''' is malformed or missing: %s",
+                             arguments.config, exn)
                 sys.exit()
         else:
-            print("Config file '" + f"{config}' not found")
+            logger.error("Config file '%s' not found", config)
             sys.exit()
 
     if not argdict.get("telem_points"):
         # Dummy telemetry in case no config is available, primarily for debugging
-        print("No telemetry points specified, using default dummy points")
+        logger.warning("No telemetry points specified, using default dummy points")
         argdict['telem_points'] = {"eps.stats.up_seconds":      {"type": "int", "threshold": None},
                                    "eps.stats.session_seconds": {"type": "int", "threshold": None}}
 
@@ -836,4 +846,4 @@ if __name__ == "__main__":
     try:
         main(argdict)
     except Exception as exn:
-        print(f"Error running {script_nm}: {exn}")
+        logger.error("Error running %s: %s", script_nm, exn)
