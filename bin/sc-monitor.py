@@ -245,13 +245,15 @@ class SlackAlert():
                                      " / ".join(limits)}
                 resp      = requests.post(self.config['slack_url'], data = json.dumps(slack_msg),
                                           headers = {'Content-Type': 'application/json'})
+                logger.info(f"Sending slack alert for telemetry {self.name}")
                 if resp.status_code != 200:
+                    logger.warning(f"Failed to send slack alert for {self.name}")
                     raise ValueError(f"Slack request returned error {resp.status_code}: " + \
                                      f"{resp.text}")
                 self.last_alert_ts  = now
                 self.next_alert_ts  = now + self.config['slack_delay']
             else:
-                # to soon to (re)send the alert
+                # too soon to (re)send the alert
                 pass
 
 
@@ -501,8 +503,8 @@ class InfoDisplay:
                     # quick succession (e.g. health.service itself bouncing once during
                     # the target's own startup). Treat this as the SAME event -- update
                     # the cached value and move on quietly, no second popup.
-                    logger.info(f"{now}: boot_id changed again ({self.last_boot_id} -> " +
-                                f"{current_boot_id}) within {REBOOT_DEBOUNCE_SEC}s of the last " +
+                    logger.info(f"{now}: boot_id changed again ({self.last_boot_id} -> "
+                                f"{current_boot_id}) within {REBOOT_DEBOUNCE_SEC}s of the last "
                                 "reported reboot -- treating as the same event, not popping up again")
             if current_boot_id is not None:
                 self.last_boot_id = current_boot_id
@@ -529,6 +531,7 @@ class InfoDisplay:
                     # Already an alert for this item
                     row_info['alert'].val_ok_ts = None
                 else:
+                    logger.info(f"Alarming {row_key}: value {row_val}")
                     # This item/alert hasn't been slacked yet.  Add alert object and slack now
                     row_info['alert'] = SlackAlert(self.args, row_key, upper_limit, lower_limit)
 
@@ -550,11 +553,12 @@ class InfoDisplay:
                 now = time.time()
                 ok_ts = row_info['alert'].val_ok_ts
                 if ok_ts and now >= (ok_ts + self.args['reset_seconds']):
-                    logger.info(f"{now}: {row_key} value {row_val} back within limits " + \
-                                f"(upper={upper_limit}, lower={lower_limit}) for " + \
+                    logger.info(f"{now}: {row_key} value {row_val} back within limits "
+                                f"(upper={upper_limit}, lower={lower_limit}) for "
                                 f"{self.args['reset_seconds']} seconds")
                     del row_info['alert']
                     row_info['tag'] = 'yellow'
+                    logger.info(f"Alarm cleared {row_key}: value {row_val}")
                 elif not ok_ts:
                     # Value is now (first time) ok
                     row_info['alert'].val_ok_ts = now
@@ -594,7 +598,7 @@ class InfoDisplay:
             general:
                 reboot_popup: false
         """
-        logger.warning(f"{time.time()}: target reboot detected (boot_id {old_id} -> {new_id}), " +
+        logger.warning(f"{time.time()}: target reboot detected (boot_id {old_id} -> {new_id}), "
                        "clearing pending warnings/alarms")
 
         for row_key, row_info in self.disp_info.items():
@@ -615,7 +619,7 @@ class InfoDisplay:
             popup.transient(self.root)
             if self.topmost:
                 popup.attributes('-topmost', True)
-            ttk.Label(popup, text="Target system reboot detected.\n" +
+            ttk.Label(popup, text="Target system reboot detected.\n"
                                   f"boot_id changed: {old_id} -> {new_id}",
                      padding=20).pack()
             ttk.Button(popup, text="OK", command=popup.destroy).pack(pady=(0, 10))
@@ -686,6 +690,7 @@ class InfoDisplay:
         """
         for row_key, row_info in self.disp_info.items():          #pylint: disable=unused-variable
             if row_info.get('tag') == 'yellow':
+                logger.info("Warning cleared by operator")
                 row_info['tag'] = 'normal'
                 self.tree.item(row_info['row_id'], tags=('normal',))
 
