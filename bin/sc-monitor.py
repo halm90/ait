@@ -827,6 +827,7 @@ if __name__ == "__main__":
         else:
             logger.error("Config file '%s' not found", config)
             sys.exit()
+        logger.info(f"Starting with config file {config}")
 
     if not argdict.get("telem_points"):
         # Dummy telemetry in case no config is available, primarily for debugging
@@ -845,5 +846,6 @@ if __name__ == "__main__":
 
     try:
         main(argdict)
+        logger.info(f"normal exit")
     except Exception as exn:
         logger.error("Error running %s: %s", script_nm, exn)
